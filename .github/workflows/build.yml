@@ -1,0 +1,101 @@
+# 工作流名称：Python一键打包 | 自定义参数 | 指定目录存放 | 自动清理文件
+name: Python打包-可视化配置-自动清理-指定目录存放
+
+# Run workflow按钮下的可视化自定义参数（全部保留：-w/-c/-F/-n/版本/依赖）
+on:
+  workflow_dispatch:
+    inputs:
+      console_mode:
+        description: '程序运行时是否显示黑色控制台窗口'
+        required: true
+        default: '无控制台窗口(-w) 推荐GUI程序'
+        type: choice
+        options:
+          - 无控制台窗口(-w) 推荐GUI程序
+          - 显示控制台窗口(-c) 推荐带print的程序
+      build_mode:
+        description: '打包文件格式'
+        required: true
+        default: '单个独立exe(-F) 推荐'
+        type: choice
+        options:
+          - 单个独立exe(-F) 推荐
+          - 文件夹形式(无-F) 适合大项目
+      exe_name:
+        description: '自定义打包后的EXE文件名 (不用写.exe后缀，留空默认：main)'
+        required: false
+        default: ''
+      python_ver:
+        description: '选择打包用的Python版本【必须和你本地一致！】'
+        required: true
+        default: '3.10'
+        type: choice
+        options:
+          - 3.8
+          - 3.9
+          - 3.10
+          - 3.11
+      py_deps:
+        description: '项目依赖包(纯Python无依赖则留空，多个依赖用空格分隔)'
+        required: false
+        default: ''
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: 拉取仓库所有文件（包含files文件夹内的py源码）
+        uses: actions/checkout@v4
+
+      - name: 🔴【打包前置】自动清理 build文件夹内 所有旧的exe文件（只删exe，不删文件夹/其他文件）
+        run: |
+          # 创建build文件夹（如果不存在就创建，避免报错，不会形成幽灵文件夹）
+          if (-not (Test-Path -Path "build")) { New-Item -ItemType Directory -Path "build" | Out-Null }
+          # 仅删除build目录下的 *.exe 文件，其他文件/子文件夹全部保留
+          Get-ChildItem -Path "build" -Filter "*.exe" -File | Remove-Item -Force -ErrorAction SilentlyContinue
+          Write-Host "✅ 已清理build文件夹内所有旧exe文件，文件夹保留"
+
+      - name: 配置选择的Python版本
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ github.event.inputs.python_ver }}
+
+      - name: 安装打包工具PyInstaller和项目依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller ${{ github.event.inputs.py_deps }}
+
+      - name: 核心打包 - 读取可视化参数自动拼接命令 + 指定打包源文件为files目录下的main.py
+        run: |
+          # 初始化打包命令，指定源码路径为 files/main.py 核心修改点！
+          $cmd = "pyinstaller files/main.py"
+          
+          # 根据选择的参数拼接 -F / -w/-c / -n
+          if ("${{ github.event.inputs.build_mode }}" -eq "单个独立exe(-F) 推荐") { $cmd += " -F" }
+          if ("${{ github.event.inputs.console_mode }}" -eq "无控制台窗口(-w) 推荐GUI程序") { $cmd += " -w" } else { $cmd += " -c" }
+          if ("${{ github.event.inputs.exe_name }}" -ne "") { $cmd += " -n ${{ github.event.inputs.exe_name }}" }
+          
+          # 执行打包命令
+          Write-Host "✅ 执行打包命令：" $cmd
+          Invoke-Expression $cmd
+
+      - name: 🔴【产物迁移】将打包好的exe文件 从默认dist目录 移动到 自定义build文件夹
+        run: |
+          # 定义exe文件名（兼容自定义名称和默认名称）
+          $exeName = "${{ github.event.inputs.exe_name }}"
+          if ($exeName -eq "") { $exeName = "main" }
+          # 移动dist目录下的exe到build目录，覆盖同名旧文件（保证是最新产物）
+          Move-Item -Path "dist/$exeName.exe" -Destination "build/" -Force -ErrorAction SilentlyContinue
+          Write-Host "✅ 已将最新exe文件迁移至 build 文件夹"
+
+      - name: 🔴【打包收尾】自动删除 files文件夹内 所有.py源码文件（只删py，不删文件夹/其他文件，杜绝幽灵文件夹）
+        run: |
+          # 仅删除files目录下的 *.py 文件，其他文件/子文件夹全部保留
+          Get-ChildItem -Path "files" -Filter "*.py" -File | Remove-Item -Force -ErrorAction SilentlyContinue
+          Write-Host "✅ 已清理files文件夹内所有py源码文件，文件夹保留"
+
+      - name: 上传最终打包产物（build文件夹内的exe，供下载）
+        uses: actions/upload-artifact@v4
+        with:
+          name: Windows最终打包产物_${{ github.event.inputs.exe_name || 'main' }}
+          path: build/*.exe
