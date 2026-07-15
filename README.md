@@ -29,8 +29,7 @@
 ```
 Auto_Pyinstaller_Build/
 ├── .github/workflows/
-│   ├── build.yml      # 打包 + 归档（手动触发）
-│   └── release.yml    # 发 Release（build 成功后自动触发）
+│   └── build.yml      # 打包 + 归档 + 发 Release（手动触发，一站式）
 ├── files/
 │   ├── main.py                    # ⭐ 入口：替换成你自己的脚本
 │   ├── requirements.txt           # ⭐ 依赖：填你项目用到的 pip 包
@@ -49,7 +48,7 @@ Auto_Pyinstaller_Build/
 - 每次 `build.yml` 跑成功后，会把 `files/` 下的所有文件**带时间戳归档**到 `Last_Files/<exe名>_yyyyMMdd-HHmmss/`，再清空 `files/*.py`。
 - 归档里会写一份 `_BUILD_INFO.txt`，记录打包时间 / EXE 名 / 工作流链接。
 - 归档完会自动 `git commit + push` 落库，**历史源码永不丢**。
-- `release.yml` 监听 `build.yml` 成功事件，**自动把 build/ 下的 exe 打成 zip 并发 GitHub Release**（带自动生成的 changelog）。也可以手动 Run workflow 补发历史版本。
+- **同一个工作流内**，在最后一步把 `build/` 下的 exe 打成 zip，**直接发 GitHub Release**（带自动 changelog）。UI 多了一个开关 `publish_release`，可以选"不发布"只下载 Artifact。
 
 ## 四、参数说明
 
@@ -81,4 +80,4 @@ A：旧版本会跑完删 `files/*.py`，导致下次打包失败。新版本只
 A：每次跑完会**带时间戳**归档到 `Last_Files/<exe名>_yyyyMMdd-HHmmss/`，再清空 `files/*.py`。历史版本全在 `Last_Files/` 落库，**永远不会丢**。
 
 **Q：怎么发 Release？**
-A：不用手动管。`release.yml` 监听 `build.yml` 成功后会自动跑，把 exe 打成 zip + 创建 GitHub Release + 自动 changelog。
+A：不用手动管。`build.yml` 跑完会**自己**把 exe 打成 zip + 创建 GitHub Release + 自动 changelog。如果只想下载 Artifact 不发版，UI 把 `publish_release` 选成"不发 Release"就行。

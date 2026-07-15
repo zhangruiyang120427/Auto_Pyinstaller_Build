@@ -39,6 +39,18 @@ on:
         description: '额外依赖(空格分隔；常规依赖建议写 files/requirements.txt)'
         required: false
         default: ''
+      publish_release:
+        description: '打包完是否自动发 GitHub Release'
+        required: true
+        default: '发 Release(打 zip 作为 asset)'
+        type: choice
+        options:
+          - 发 Release(打 zip 作为 asset)
+          - 不发 Release
+
+# 发 Release 需要写权限
+permissions:
+  contents: write
 
 jobs:
   build-windows:
@@ -208,5 +220,59 @@ EXE 名称: $exeName
           } else {
             Write-Host "==> 无文件变动，跳过提交"
           }
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 10) 把 build/ 下的 exe 打成 zip，发 GitHub Release
+      #     - 在同一 job 内直发，不再用第二个工作流
+      #     - 跳过条件：用户选了"不发 Release"
+      - name: 打 zip 并发 GitHub Release
+        if: github.event.inputs.publish_release == '发 Release(打 zip 作为 asset)'
+        shell: pwsh
+        run: |
+          $ts = Get-Date -Format "yyyyMMdd-HHmmss"
+          $exeName = "${{ github.event.inputs.exe_name }}".Trim()
+          if ($exeName -eq "") { $exeName = "main" }
+          $tag = "v$ts"
+          $zipName = "${exeName}_$tag.zip"
+
+          $exes = @(Get-ChildItem -Path "build" -Filter "*.exe" -File)
+          if ($exes.Count -eq 0) {
+            Write-Error "build/ 目录下没有 .exe，跳过发版"
+            exit 1
+          }
+          Compress-Archive -Path "build/*" -DestinationPath $zipName -Force
+          Write-Host "==> 已打包: $zipName"
+
+          # 写一份 release body
+          $body = @"
+## $exeName $tag
+
+- 打包时间: $ts
+- 入口: files/main.py (运行编号 #${{ github.run_number }})
+- 工作流: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+### 使用说明
+1. 下载下方的 zip
+2. 解压得到 `${exeName}.exe`
+3. 双击运行（需 Windows）
+"@
+          $bodyFile = "RELEASE_BODY.md"
+          $body | Out-File -FilePath $bodyFile -Encoding utf8
+
+          echo "RELEASE_TAG=$tag" >> $env:GITHUB_ENV
+          echo "RELEASE_ZIP=$zipName" >> $env:GITHUB_ENV
+          echo "RELEASE_BODY=$bodyFile" >> $env:GITHUB_ENV
+
+      - name: 创建 / 更新 GitHub Release
+        if: github.event.inputs.publish_release == '发 Release(打 zip 作为 asset)'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_TAG }}
+          body_path: ${{ env.RELEASE_BODY }}
+          files: ${{ env.RELEASE_ZIP }}
+          fail_on_unmatched_files: true
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
