@@ -1,5 +1,5 @@
-# 工作流：Python 一键打包 | 自带样例文件 | 自动缓存依赖 | 永不删源码
-name: Python打包-自带样例-缓存依赖-安全打包
+# 工作流：Python 一键打包 | 自带样例文件 | 自动缓存依赖 | 打包后归档
+name: Python打包-自带样例-缓存依赖-归档历史
 
 # 触发方式：手动按钮，可视化配置参数
 on:
@@ -147,10 +147,66 @@ jobs:
           Move-Item -Path $distExe.FullName -Destination "build/" -Force
           Write-Host "==> 已迁移: build/$($distExe.Name)"
 
-      # 8) 上传产物（注意：本次工作流不再删除 files/ 下的源码，避免下次无法复打）
+      # 8) 上传产物
       - name: 上传 Windows 产物
         uses: actions/upload-artifact@v4
         with:
           name: Windows-${{ github.event.inputs.exe_name || 'main' }}
           path: build/*.exe
           if-no-files-found: error
+
+      # 9) 把本次用的源码归档到 Last_Files/，再清空 files/*.py
+      #    - 每次新源码进 files/，触发一次打包
+      #    - 旧源码不会被"覆盖式丢失"，而是带时间戳归档到 Last_Files/
+      - name: 归档源码到 Last_Files 并清空 files/
+        if: always() && success()
+        shell: pwsh
+        run: |
+          $ts = Get-Date -Format "yyyyMMdd-HHmmss"
+          $exeName = "${{ github.event.inputs.exe_name }}".Trim()
+          if ($exeName -eq "") { $exeName = "main" }
+          $tag = "${exeName}_$ts"
+
+          # 1) 确保 Last_Files/ 存在
+          if (-not (Test-Path -Path "Last_Files")) {
+            New-Item -ItemType Directory -Path "Last_Files" | Out-Null
+          }
+          $archiveDir = "Last_Files/$tag"
+          New-Item -ItemType Directory -Path $archiveDir | Out-Null
+
+          # 2) 把 files/ 下所有内容（不含 build 产物）原样拷贝到归档目录
+          $pyCount = 0
+          Get-ChildItem -Path "files" -File | ForEach-Object {
+            Copy-Item -Path $_.FullName -Destination $archiveDir -Force
+            if ($_.Extension -eq ".py") { $pyCount++ }
+          }
+          Write-Host "==> 归档: $archiveDir (含 $pyCount 个 .py 源文件)"
+
+          # 3) 删除 files/ 下的 .py 源文件（保留 readme/requirements 等）
+          Get-ChildItem -Path "files" -Filter "*.py" -File -ErrorAction SilentlyContinue | ForEach-Object {
+            Remove-Item -Path $_.FullName -Force
+            Write-Host "==> 删除: files/$($_.Name)"
+          }
+
+          # 4) 在 Last_Files/$tag 写个说明
+          @"
+打包时间: $ts
+EXE 名称: $exeName
+工作流运行: ${{ github.run_id }}
+工作流链接: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+"@ | Out-File -FilePath "$archiveDir/_BUILD_INFO.txt" -Encoding utf8
+
+          # 5) 提交这次归档
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          $changes = git status --porcelain
+          if ($changes) {
+            git commit -m "archive: $tag (build #${{ github.run_number }})"
+            git push
+            Write-Host "==> 已提交归档"
+          } else {
+            Write-Host "==> 无文件变动，跳过提交"
+          }
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

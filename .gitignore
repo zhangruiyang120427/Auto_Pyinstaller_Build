@@ -5,3 +5,7 @@ dist/
 *.spec
 __pycache__/
 *.pyc
+
+# 归档目录里的构建产物（源码本身要保留）
+Last_Files/**/build/
+Last_Files/**/*.spec
