@@ -1,7 +1,7 @@
-# 工作流名称：Python一键打包 | 自定义参数 | 指定目录存放 | 自动清理文件
-name: Python打包-可视化配置-自动清理-指定目录存放
+# 工作流：Python 一键打包 | 自带样例文件 | 自动缓存依赖 | 永不删源码
+name: Python打包-自带样例-缓存依赖-安全打包
 
-# Run workflow按钮下的可视化自定义参数（全部保留：-w/-c/-F/-n/版本/依赖）
+# 触发方式：手动按钮，可视化配置参数
 on:
   workflow_dispatch:
     inputs:
@@ -22,21 +22,21 @@ on:
           - 单个独立exe(-F) 推荐
           - 文件夹形式(无-F) 适合大项目
       exe_name:
-        description: '自定义打包后的EXE文件名 (不用写.exe后缀，留空默认：main)'
+        description: 'EXE文件名(留空则与入口py同名)'
         required: false
         default: ''
       python_ver:
-        description: '选择打包用的Python版本【必须和你本地一致！】'
+        description: '打包用Python版本(必须与本地一致)'
         required: true
         default: '3.10'
         type: choice
         options:
-          - 3.8
-          - 3.9
-          - 3.10
-          - 3.11
+          - '3.8'
+          - '3.9'
+          - '3.10'
+          - '3.11'
       py_deps:
-        description: '项目依赖包(纯Python无依赖则留空，多个依赖用空格分隔)'
+        description: '额外依赖(空格分隔；常规依赖建议写 files/requirements.txt)'
         required: false
         default: ''
 
@@ -44,58 +44,104 @@ jobs:
   build-windows:
     runs-on: windows-latest
     steps:
-      - name: 拉取仓库所有文件（包含files文件夹内的py源码）
+      # 1) 拉取仓库（含 files/ 下的源文件）
+      - name: 拉取仓库文件
         uses: actions/checkout@v4
 
-      - name: 🔴【打包前置】自动清理 build文件夹内 所有旧的exe文件（只删exe，不删文件夹/其他文件）
-        run: |
-          # 创建build文件夹（如果不存在就创建，避免报错，不会形成幽灵文件夹）
-          if (-not (Test-Path -Path "build")) { New-Item -ItemType Directory -Path "build" | Out-Null }
-          # 仅删除build目录下的 *.exe 文件，其他文件/子文件夹全部保留
-          Get-ChildItem -Path "build" -Filter "*.exe" -File | Remove-Item -Force -ErrorAction SilentlyContinue
-          Write-Host "✅ 已清理build文件夹内所有旧exe文件，文件夹保留"
-
-      - name: 配置选择的Python版本
+      # 2) 配置Python + 自动缓存pip（关键改进：减少每次重装依赖的时间）
+      - name: 配置Python (带pip缓存)
         uses: actions/setup-python@v5
         with:
           python-version: ${{ github.event.inputs.python_ver }}
+          cache: 'pip'
+          cache-dependency-path: files/requirements.txt
 
-      - name: 安装打包工具PyInstaller和项目依赖
+      # 3) 升级pip并装PyInstaller
+      - name: 安装 PyInstaller
+        shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller ${{ github.event.inputs.py_deps }}
+          pip install pyinstaller
 
-      - name: 核心打包 - 读取可视化参数自动拼接命令 + 指定打包源文件为files目录下的main.py
+      # 4) 装依赖：优先 files/requirements.txt，再加上UI输入的额外依赖
+      - name: 安装项目依赖
+        shell: pwsh
         run: |
-          # 初始化打包命令，指定源码路径为 files/main.py 核心修改点！
-          $cmd = "pyinstaller files/main.py"
-          
-          # 根据选择的参数拼接 -F / -w/-c / -n
-          if ("${{ github.event.inputs.build_mode }}" -eq "单个独立exe(-F) 推荐") { $cmd += " -F" }
-          if ("${{ github.event.inputs.console_mode }}" -eq "无控制台窗口(-w) 推荐GUI程序") { $cmd += " -w" } else { $cmd += " -c" }
-          if ("${{ github.event.inputs.exe_name }}" -ne "") { $cmd += " -n ${{ github.event.inputs.exe_name }}" }
-          
-          # 执行打包命令
-          Write-Host "✅ 执行打包命令：" $cmd
-          Invoke-Expression $cmd
+          if (Test-Path -Path "files/requirements.txt") {
+            $content = (Get-Content "files/requirements.txt" -Raw).Trim()
+            if ($content -match '[^#\s]') {
+              Write-Host "==> 从 files/requirements.txt 安装依赖"
+              pip install -r files/requirements.txt
+            } else {
+              Write-Host "==> files/requirements.txt 为空或全注释，跳过"
+            }
+          } else {
+            Write-Host "==> files/requirements.txt 不存在，跳过"
+          }
+          $extra = "${{ github.event.inputs.py_deps }}".Trim()
+          if ($extra -ne "") {
+            Write-Host "==> 安装额外依赖: $extra"
+            pip install $extra
+          }
 
-      - name: 🔴【产物迁移】将打包好的exe文件 从默认dist目录 移动到 自定义build文件夹
+      # 5) 准备 build 输出目录
+      - name: 准备 build/ 目录
+        shell: pwsh
         run: |
-          # 定义exe文件名（兼容自定义名称和默认名称）
-          $exeName = "${{ github.event.inputs.exe_name }}"
-          if ($exeName -eq "") { $exeName = "main" }
-          # 移动dist目录下的exe到build目录，覆盖同名旧文件（保证是最新产物）
-          Move-Item -Path "dist/$exeName.exe" -Destination "build/" -Force -ErrorAction SilentlyContinue
-          Write-Host "✅ 已将最新exe文件迁移至 build 文件夹"
+          if (-not (Test-Path -Path "build")) { New-Item -ItemType Directory -Path "build" | Out-Null }
 
-      - name: 🔴【打包收尾】自动删除 files文件夹内 所有.py源码文件（只删py，不删文件夹/其他文件，杜绝幽灵文件夹）
+      # 6) 核心打包：自动找入口 + 拼接 PyInstaller 参数
+      - name: 自动定位入口并打包
+        shell: pwsh
         run: |
-          # 仅删除files目录下的 *.py 文件，其他文件/子文件夹全部保留
-          Get-ChildItem -Path "files" -Filter "*.py" -File | Remove-Item -Force -ErrorAction SilentlyContinue
-          Write-Host "✅ 已清理files文件夹内所有py源码文件，文件夹保留"
+          # 自动定位 files/ 下的入口 .py：优先 main.py，否则取第一个
+          $pyFiles = @(Get-ChildItem -Path "files" -Filter "*.py" -File)
+          if ($pyFiles.Count -eq 0) {
+            Write-Error "files/ 目录下没有任何 .py 源文件，请先把代码放进去"
+            exit 1
+          }
+          $sourcePy = $pyFiles | Where-Object { $_.Name -ieq "main.py" } | Select-Object -First 1
+          if (-not $sourcePy) { $sourcePy = $pyFiles[0] }
+          Write-Host "==> 入口源文件: files/$($sourcePy.Name)"
 
-      - name: 上传最终打包产物（build文件夹内的exe，供下载）
+          # 自动确定 EXE 名称
+          $exeName = "${{ github.event.inputs.exe_name }}".Trim()
+          if ($exeName -eq "") {
+            $exeName = [System.IO.Path]::GetFileNameWithoutExtension($sourcePy.Name)
+          }
+
+          # 拼接 PyInstaller 参数
+          $pyArgs = @("files/$($sourcePy.Name)")
+          if ("${{ github.event.inputs.build_mode }}" -eq "单个独立exe(-F) 推荐") {
+            $pyArgs += "-F"
+          }
+          if ("${{ github.event.inputs.console_mode }}" -eq "无控制台窗口(-w) 推荐GUI程序") {
+            $pyArgs += "-w"
+          } else {
+            $pyArgs += "-c"
+          }
+          $pyArgs += @("-n", $exeName)
+
+          Write-Host "==> 执行: pyinstaller $($pyArgs -join ' ')"
+          pyinstaller @pyArgs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # 7) 把 dist/ 下的产物搬到 build/ 供下载
+      - name: 迁移产物到 build/
+        shell: pwsh
+        run: |
+          $distExe = Get-ChildItem -Path "dist" -Filter "*.exe" -File -Recurse | Select-Object -First 1
+          if (-not $distExe) {
+            Write-Error "dist/ 下未找到 .exe，打包可能失败"
+            exit 1
+          }
+          Move-Item -Path $distExe.FullName -Destination "build/" -Force
+          Write-Host "==> 已迁移: build/$($distExe.Name)"
+
+      # 8) 上传产物（注意：本次工作流不再删除 files/ 下的源码，避免下次无法复打）
+      - name: 上传 Windows 产物
         uses: actions/upload-artifact@v4
         with:
-          name: Windows最终打包产物_${{ github.event.inputs.exe_name || 'main' }}
+          name: Windows-${{ github.event.inputs.exe_name || 'main' }}
           path: build/*.exe
+          if-no-files-found: error

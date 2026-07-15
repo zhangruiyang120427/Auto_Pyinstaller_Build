@@ -1,0 +1,7 @@
+# 打包产物
+build/*.exe
+build/*.zip
+dist/
+*.spec
+__pycache__/
+*.pyc
