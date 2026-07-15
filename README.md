@@ -32,11 +32,14 @@ Auto_Pyinstaller_Build/
 ├── files/
 │   ├── main.py                    # ⭐ 入口：替换成你自己的脚本
 │   ├── requirements.txt           # ⭐ 依赖：填你项目用到的 pip 包
+│   ├── icon.ico                   # ⭐ 可选：放在这里自动当 EXE 图标
 │   └── readme.txt
 ├── build/
 │   └── readme.txt                 # 打包后 exe 会出现在这里（已在 .gitignore 忽略 .exe）
 └── README.md
 ```
+
+**自定义图标**：把 `.ico` 文件放到 `files/icon.ico`，工作流会自动加 `--icon files/icon.ico`。
 
 ## 四、参数说明
 
@@ -59,7 +62,7 @@ A：八成是少了依赖 / 数据文件。优先：
 2. 资源文件用 `--add-data "src;."` 加到工作流（需要小改 build.yml）
 
 **Q：能不能指定图标？**
-A：放一个 `files/icon.ico`，在 build.yml 的 `pyinstaller` 命令里加 `--icon files/icon.ico`。
+A：放一个 `files/icon.ico`，工作流会自动加 `--icon files/icon.ico`，不需要改 yml。注意 Windows 要求 `.ico` 格式（不能直接用 png/jpg）。
 
 **Q：为什么不再删除源码了？**
 A：旧版本会跑完删 `files/*.py`，导致下次打包失败。新版本只把 `dist/*.exe` 搬到 `build/`，**源文件一律保留**。

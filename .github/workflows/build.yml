@@ -90,7 +90,7 @@ jobs:
         run: |
           if (-not (Test-Path -Path "build")) { New-Item -ItemType Directory -Path "build" | Out-Null }
 
-      # 6) 核心打包：自动找入口 + 拼接 PyInstaller 参数
+      # 6) 核心打包：自动找入口 + 拼接 PyInstaller 参数（带图标）
       - name: 自动定位入口并打包
         shell: pwsh
         run: |
@@ -121,6 +121,15 @@ jobs:
             $pyArgs += "-c"
           }
           $pyArgs += @("-n", $exeName)
+
+          # 图标：files/icon.ico 存在就加上，不存在也不报错
+          $iconPath = "files/icon.ico"
+          if (Test-Path -Path $iconPath) {
+            Write-Host "==> 使用图标: $iconPath"
+            $pyArgs += @("--icon", $iconPath)
+          } else {
+            Write-Host "==> 未发现 $iconPath，跳过图标设置"
+          }
 
           Write-Host "==> 执行: pyinstaller $($pyArgs -join ' ')"
           pyinstaller @pyArgs
